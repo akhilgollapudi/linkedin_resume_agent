@@ -1,0 +1,47 @@
+profile:
+  location: "Hyderabad, Telangana, India"
+  min_match_score: 35
+  max_jobs_per_run: 50
+  search_queries:
+    - "Principal AI Engineer"
+    - "AI Architect"
+    - "Agentic AI Architect"
+    - "Generative AI Architect"
+    - "Cloud AI Engineer"
+    - "Principal Software Engineer AI"
+    - "Engineering Manager Generative AI"
+    - "Staff AI Engineer"
+  seniority_terms:
+    - principal
+    - staff
+    - lead
+    - architect
+    - senior
+    - engineering manager
+  exclude_terms:
+    - intern
+    - internship
+    - fresher
+    - entry level
+    - 0-1 years
+resume:
+  master_json: "data/master_resume.json"
+  output_dir: "output"
+  target_pages: 2
+  min_font_size: 9.8
+jobs:
+  csv_path: "data/jobs.csv"
+  database_path: "data/jobs.sqlite3"
+  fetch_external_jd_pages: true
+  request_timeout_seconds: 15
+  max_description_chars: 30000
+  # LinkedIn pages are intentionally not fetched by the script. Import the JD text
+  # into jobs.csv, or use an employer career-site URL where automated access is permitted.
+
+# Automatic public-web discovery. This does not log in to or scrape LinkedIn.
+discovery:
+  enabled: true
+  request_timeout_seconds: 8
+  results_per_query: 8
+  max_candidates: 40
+  request_pause_seconds: 0.25

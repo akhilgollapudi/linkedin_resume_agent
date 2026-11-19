@@ -1,0 +1,10 @@
+.venv/
+.env
+__pycache__/
+*.py[cod]
+data/jobs.csv
+data/jobs.sqlite3
+output/*
+!output/.gitkeep
+
+browser_profile/
