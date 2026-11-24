@@ -1,0 +1,38 @@
+{
+  "basics": {
+    "name": "Your Name",
+    "label": "Your professional headline",
+    "email": "you@example.com",
+    "phone": "",
+    "location": "City, Country",
+    "summary": "Add a factual summary based on your experience.",
+    "profiles": [
+      {
+        "network": "LinkedIn",
+        "url": "https://www.linkedin.com/in/your-profile/"
+      }
+    ]
+  },
+  "work": [
+    {
+      "company": "Company Name",
+      "position": "Job Title",
+      "project": "Project or team",
+      "startDate": "2024-01",
+      "endDate": "",
+      "highlights": [
+        "Describe a verified responsibility or achievement."
+      ]
+    }
+  ],
+  "education": [],
+  "skills": [
+    {
+      "name": "Technical Skills",
+      "keywords": [
+        "Add skills you can substantiate"
+      ]
+    }
+  ],
+  "awards": []
+}

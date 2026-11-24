@@ -17,7 +17,13 @@ RULE = colors.HexColor('#DADCE0')
 
 def markup(text):
     """Escape untrusted text while retaining intentional <b> tags from the master JSON."""
-    text = str(text or '').replace('—', '-').replace('–', '-')
+    text = str(text or '').translate(str.maketrans({
+        '‐': '-',
+        '‑': '-',
+        '‒': '-',
+        '–': '-',
+        '—': '-',
+    }))
     parts = re.split(r'(<b>.*?</b>)', text)
     out = []
     for part in parts:
@@ -43,14 +49,14 @@ def build_pdf(data, output_path, target_pages=2):
         'name': ParagraphStyle('name', parent=base['Normal'], fontName='Helvetica-Bold', fontSize=19, leading=22.5, alignment=TA_CENTER, textColor=INK, spaceAfter=4),
         'label': ParagraphStyle('label', parent=base['Normal'], fontName='Helvetica', fontSize=11, leading=13.8, alignment=TA_CENTER, textColor=MUTED, spaceAfter=6),
         'contact': ParagraphStyle('contact', parent=base['Normal'], fontName='Helvetica', fontSize=9.1, leading=11.5, alignment=TA_CENTER, textColor=MUTED),
-        'section': ParagraphStyle('section', parent=base['Normal'], fontName='Helvetica-Bold', fontSize=11.3, leading=13.8, textColor=ACC, spaceBefore=8, spaceAfter=4),
-        'body': ParagraphStyle('body', parent=base['Normal'], fontName='Helvetica', fontSize=10.4, leading=14.0, textColor=INK, spaceAfter=2.5),
-        'company': ParagraphStyle('company', parent=base['Normal'], fontName='Helvetica-Bold', fontSize=11.1, leading=13.8, textColor=INK, spaceBefore=5, spaceAfter=2),
-        'role': ParagraphStyle('role', parent=base['Normal'], fontName='Helvetica', fontSize=10.4, leading=13.4, textColor=MUTED, spaceAfter=3),
-        'project': ParagraphStyle('project', parent=base['Normal'], fontName='Helvetica-Bold', fontSize=10.5, leading=13.4, textColor=ACC, spaceBefore=3.5, spaceAfter=1.5),
-        'bullet': ParagraphStyle('bullet', parent=base['Normal'], fontName='Helvetica', fontSize=10.2, leading=13.5, textColor=INK, leftIndent=12, firstLineIndent=-7, spaceAfter=2.6),
-        'skill': ParagraphStyle('skill', parent=base['Normal'], fontName='Helvetica', fontSize=9.9, leading=13.1, textColor=INK, spaceAfter=2.2),
-        'small': ParagraphStyle('small', parent=base['Normal'], fontName='Helvetica', fontSize=9.9, leading=13.1, textColor=INK, spaceAfter=2.2),
+        'section': ParagraphStyle('section', parent=base['Normal'], fontName='Helvetica-Bold', fontSize=11.3, leading=13.4, textColor=ACC, spaceBefore=6, spaceAfter=3),
+        'body': ParagraphStyle('body', parent=base['Normal'], fontName='Helvetica', fontSize=10.4, leading=13.2, textColor=INK, spaceAfter=2),
+        'company': ParagraphStyle('company', parent=base['Normal'], fontName='Helvetica-Bold', fontSize=11.1, leading=13.2, textColor=INK, spaceBefore=4, spaceAfter=2),
+        'role': ParagraphStyle('role', parent=base['Normal'], fontName='Helvetica', fontSize=10.4, leading=12.8, textColor=MUTED, spaceAfter=2),
+        'project': ParagraphStyle('project', parent=base['Normal'], fontName='Helvetica-Bold', fontSize=10.5, leading=12.8, textColor=ACC, spaceBefore=2.5, spaceAfter=1),
+        'bullet': ParagraphStyle('bullet', parent=base['Normal'], fontName='Helvetica', fontSize=10.2, leading=12.8, textColor=INK, leftIndent=12, firstLineIndent=-7, spaceAfter=1.5),
+        'skill': ParagraphStyle('skill', parent=base['Normal'], fontName='Helvetica', fontSize=9.9, leading=12.5, textColor=INK, spaceAfter=1.5),
+        'small': ParagraphStyle('small', parent=base['Normal'], fontName='Helvetica', fontSize=9.9, leading=12.5, textColor=INK, spaceAfter=1.5),
     }
     story = []
     b = data['basics']
@@ -61,7 +67,7 @@ def build_pdf(data, output_path, target_pages=2):
 
     def section(title):
         story.append(Paragraph(escape(title), styles['section']))
-        story.append(HRFlowable(width='100%', thickness=.6, color=RULE, spaceBefore=2, spaceAfter=4))
+        story.append(HRFlowable(width='100%', thickness=.6, color=RULE, spaceBefore=1, spaceAfter=3))
 
     section('SUMMARY')
     story.append(Paragraph(markup(b.get('summary', '')), styles['body']))

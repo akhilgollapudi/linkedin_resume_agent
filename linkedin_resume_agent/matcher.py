@@ -44,6 +44,85 @@ def role_description(job):
     return description
 
 
+def analyze_job_alignment(job, resume):
+    """Map JD statements to existing resume evidence using a transparent lexical heuristic."""
+    description = role_description(job)
+    statements = re.split(r"[\n\r•▪●]+|(?<=[.!?])\s+", description)
+    requirements = []
+    seen = set()
+    for statement in statements:
+        text = re.sub(r"^\s*[-*]\s*", "", statement).strip()
+        statement_tokens = set(tokens(text))
+        normalized = text.lower()
+        if len(statement_tokens) < 3 or len(text) < 20 or normalized in seen:
+            continue
+        seen.add(normalized)
+        requirements.append((text, statement_tokens))
+        if len(requirements) == 30:
+            break
+
+    evidence = []
+    for work in resume.get("work", []):
+        source = " | ".join(
+            value for value in (
+                work.get("company", ""),
+                work.get("position", ""),
+                work.get("project", ""),
+            ) if value
+        )
+        for highlight in work.get("highlights", []):
+            evidence.append({
+                "source": source,
+                "text": highlight,
+                "tokens": set(tokens(f"{source} {highlight}")),
+            })
+    for group in resume.get("skills", []):
+        for skill in [group.get("name", ""), *group.get("keywords", [])]:
+            skill_tokens = set(tokens(skill))
+            if skill_tokens:
+                evidence.append({
+                    "source": group.get("name", "Skills"),
+                    "text": skill,
+                    "tokens": skill_tokens,
+                })
+
+    mapped = []
+    for statement, required_tokens in requirements:
+        matches = []
+        for item in evidence:
+            overlap = required_tokens & item["tokens"]
+            if overlap:
+                matches.append((
+                    len(overlap) / len(required_tokens),
+                    len(overlap),
+                    item,
+                ))
+        matches.sort(key=lambda result: (result[0], result[1]), reverse=True)
+        best_score, best_overlap, _ = matches[0] if matches else (0, 0, None)
+        status = (
+            "supported" if best_score >= 0.3 and best_overlap >= 2
+            else "partial" if best_score >= 0.15 or best_overlap >= 1
+            else "no_direct_match"
+        )
+        mapped.append({
+            "requirement": statement,
+            "status": status,
+            "evidence": [
+                {"source": item["source"], "text": item["text"]}
+                for _, _, item in matches[:2]
+            ],
+        })
+
+    return {
+        "method": "Token overlap; use as a review aid, not semantic proof.",
+        "requirements_reviewed": len(mapped),
+        "supported": sum(item["status"] == "supported" for item in mapped),
+        "partial": sum(item["status"] == "partial" for item in mapped),
+        "no_direct_match": sum(item["status"] == "no_direct_match" for item in mapped),
+        "requirements": mapped,
+    }
+
+
 def tailor_resume(resume, job, match):
     """Create a per-job copy by ranking existing evidence; never invent or rewrite claims."""
     import copy
@@ -73,9 +152,7 @@ def tailor_resume(resume, job, match):
     tailored["skills"] = sorted(tailored.get("skills", []),
                                 key=lambda g: sum(len(set(tokens(k)) & jd_tokens) for k in g.get("keywords", [])),
                                 reverse=True)
-    if job.get("title"):
-        tailored.setdefault("basics", {})["label"] = f'Target role: {job["title"]}'
-    # Retain exact factual wording; add a target label only to metadata, not as an experience claim.
+    # Keep the candidate's existing headline; job targeting stays in metadata.
     tailored["targeting"] = {"company": job.get("company", ""), "role": job.get("title", ""),
                              "job_id": job.get("job_id", ""), "match_score": match["score"]}
     return tailored

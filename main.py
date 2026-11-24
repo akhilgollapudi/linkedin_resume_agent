@@ -1,15 +1,18 @@
 import argparse
 import csv
-import os
 from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
 from linkedin_assisted import run_linkedin_assisted
 from linkedin_resume_agent.ingest import read_jobs
-from linkedin_resume_agent.matcher import score_job, tailor_resume
+from linkedin_resume_agent.matcher import analyze_job_alignment, score_job, tailor_resume
 from linkedin_resume_agent.pdf_generator import build_pdf
-from linkedin_resume_agent.llm_analysis import tailor_summary_with_llm
+from linkedin_resume_agent.llm_analysis import (
+    tailor_experience_with_llm,
+    generate_jd_bullet_proposals,
+    tailor_summary_with_llm,
+)
 from linkedin_resume_agent.storage import JobStore
 from linkedin_resume_agent.utils import load_json, save_json, slug, stable_job_id
 
@@ -44,6 +47,15 @@ def save_job_csv(job, path):
         writer.writerows(existing.values())
 
 
+def include_preapproved_jd_bullet_proposals(proposals):
+    """Include proposals under the user's standing authorization."""
+    for proposal in proposals:
+        proposal["status"] = "ai_generated_user_preapproved"
+        proposal["approved"] = True
+        proposal["approval_basis"] = "User authorized automatic inclusion"
+    return proposals
+
+
 def process_captured_job(settings, job):
     """Process the job selected by the user in LinkedIn and generate its PDF."""
     if len((job.get("description") or "").strip()) < 200:
@@ -53,10 +65,19 @@ def process_captured_job(settings, job):
     resume = load_json(resolve(settings["resume"]["master_json"]))
     job["job_id"] = stable_job_id(job)
     match = score_job(resume, job)
+    jd_alignment = analyze_job_alignment(job, resume)
+    resume_for_tailoring, experience_result = tailor_experience_with_llm(job, resume)
+    proposals, proposal_result = generate_jd_bullet_proposals(job, resume)
+    included_proposals = include_preapproved_jd_bullet_proposals(proposals)
+    for proposal in included_proposals:
+        resume_for_tailoring["work"][proposal["role_index"]].setdefault(
+            "highlights",
+            [],
+        ).append(proposal["bullet"])
 
     # Explicitly selected jobs are processed regardless of heuristic score.
-    tailored = tailor_resume(resume, job, match)
-    llm_result = tailor_summary_with_llm(job, resume)
+    tailored = tailor_resume(resume_for_tailoring, job, match)
+    llm_result = tailor_summary_with_llm(job, resume_for_tailoring)
     tailored.setdefault("basics", {})["summary"] = llm_result["summary"]
     match = score_job(tailored, job)
     tailored["targeting"]["match_score"] = match["score"]
@@ -71,9 +92,18 @@ def process_captured_job(settings, job):
         "job": {k: job.get(k, "") for k in ("job_id", "title", "company", "location", "url", "source")},
         "match": match,
         "llm_summary": {k: v for k, v in llm_result.items() if k != "summary"},
+        "llm_experience": experience_result,
+        "llm_jd_proposals": proposal_result,
+        "jd_bullet_proposals": proposals,
+        "jd_alignment_before_tailoring": jd_alignment,
+        "jd_alignment_after_tailoring": analyze_job_alignment(
+            job,
+            resume_for_tailoring,
+        ),
         "tailoring": {
             "summary": "LLM-generated when available; otherwise exact role-relevant achievements are selected from the master resume",
-            "experience_bullets": "Preserved verbatim and reordered by role relevance; projects are reordered by JD relevance",
+            "experience_bullets": "LLM-rewritten and relevance-ordered from existing source bullets; JD-based proposals are automatically included under user authorization",
+            "responsibility_mapping": "JD statements are mapped to existing resume evidence; unmatched responsibilities are AI-generated additions marked in the report",
             "skills": "Existing skills reordered by JD relevance",
             "master_resume_modified": False,
             "human_review_required": True
@@ -163,10 +193,11 @@ def main():
 
     urls = [args.url] if args.url else None
     print("=== LinkedIn Job → Tailored Resume ===")
-    print("1) Browser opens with a persistent local profile.")
-    print("2) Sign in manually, select a job, and wait for its details panel.")
-    print("3) Choose option 1 and confirm the displayed role before generating its PDF.")
-    print("4) Collecting jobs does not generate resumes; each generation requires confirmation.")
+    print("Browser opens with a persistent local profile.")
+    print("Sign in manually if required. A job ID in --url is processed automatically.")
+    print("On a general jobs page, select a job after login; it starts processing automatically.")
+    print("After each job finishes, the browser stays open and waits for another selection.")
+    print("Press Ctrl+C to stop.")
     run_linkedin_assisted(
         search_urls=urls,
         on_job_captured=lambda job: process_captured_job(settings, job)

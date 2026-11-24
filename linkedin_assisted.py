@@ -332,8 +332,6 @@ def extract_visible_job_cards(page) -> list[dict]:
 def extract_current_job(page) -> dict:
     """Extract the currently selected LinkedIn job."""
 
-    import re
-
     page.wait_for_timeout(1000)
 
     # Expand the About the job section.
@@ -724,7 +722,7 @@ def collect_search_results(page, jobs: dict[str, dict]) -> int:
     print(f"New/updated valid cards: {saved}")
     print(
         "\nNote: search cards usually do not contain the full JD. "
-        "Open a job and use option 1 to capture its description."
+        "Click a job to capture its description and generate a resume."
     )
 
     return saved
@@ -734,30 +732,59 @@ def collect_search_results(page, jobs: dict[str, dict]) -> int:
 # INDIVIDUAL JOB CAPTURE
 # ============================================================
 
-def capture_current_job(page, jobs: dict[str, dict], on_job_captured=None):
+def capture_current_job(
+    page,
+    jobs: dict[str, dict],
+    on_job_captured=None,
+    expected_job_id: str | None = None,
+):
     if is_linkedin_challenge(page):
         print("Security check detected. Capture stopped.")
         return
 
-    page.wait_for_timeout(1200)
-    data = extract_current_job(page)
+    data = {}
+    previous_snapshot = None
+    stable_reads = 0
+    for _ in range(15):
+        page.wait_for_timeout(700)
+        data = extract_current_job(page)
+        if expected_job_id and data.get("job_id") != expected_job_id:
+            continue
 
-    if not is_valid_title(data.get("title", "")):
-        print("\nJob extraction failed.")
-        print("Reason:", data.get("error") or "Invalid title")
-        print("Click an individual job and wait for its panel to load.")
+        if (
+            not is_valid_title(data.get("title", ""))
+            or not is_valid_company(data.get("company", ""))
+            or len((data.get("description") or "").strip()) < 200
+        ):
+            stable_reads = 0
+            previous_snapshot = None
+            continue
+
+        snapshot = (
+            data["job_id"],
+            data["title"],
+            data["company"],
+            data["description"],
+        )
+        if snapshot == previous_snapshot:
+            stable_reads += 1
+            if stable_reads >= 2:
+                break
+        else:
+            previous_snapshot = snapshot
+            stable_reads = 1
+
+    if stable_reads < 2:
+        print(
+            f"\nCould not load stable, complete details for selected job "
+            f"{expected_job_id or '(unknown)'}. No resume was generated."
+        )
         return
 
-    if not is_valid_company(data.get("company", "")):
-        print("\nCompany extraction failed.")
-        print("Reason:", data.get("error") or "Invalid company")
-        return
-
-    if not data.get("description"):
-        print("\nJob metadata was found, but the description was not.")
-        print("No record saved. Check the job details panel.")
-        print("Reason:", data.get("error"))
-        return
+    print("\nSelected job detected:")
+    print("Title:", data["title"])
+    print("Company:", data["company"])
+    print("Job ID:", data["job_id"])
 
     if add_or_update_job(jobs, data):
         save_jobs(jobs)
@@ -765,13 +792,137 @@ def capture_current_job(page, jobs: dict[str, dict], on_job_captured=None):
         print("\nJob successfully captured:")
         print("Title:", data["title"])
         print("Company:", data["company"])
-        print("Location:", data["location"])
+        print("Location:", data.get("location", ""))
         print("Description characters:", len(data["description"]))
         if on_job_captured:
             print("\nStarting resume tailoring and PDF generation...")
             on_job_captured(make_job_record(data))
         return make_job_record(data)
     return None
+
+
+def enqueue_selected_job(job_id: str, selected_job_ids: list[str]) -> None:
+    if re.fullmatch(r"\d+", str(job_id or "")) and job_id not in selected_job_ids:
+        selected_job_ids.append(job_id)
+        print(f"\nDetected selection of LinkedIn job {job_id}; loading its details...")
+
+
+def detect_url_job_selection(
+    page,
+    previous_job_id: str,
+    selected_job_ids: list[str],
+) -> str:
+    current_job_id = get_job_id(page.url)
+    if current_job_id and current_job_id != previous_job_id:
+        enqueue_selected_job(current_job_id, selected_job_ids)
+    return current_job_id or previous_job_id
+
+
+def enqueue_requested_job_url(search_url: str, selected_job_ids: list[str]) -> str:
+    job_id = get_job_id(search_url)
+    if job_id:
+        enqueue_selected_job(job_id, selected_job_ids)
+    return job_id
+
+
+def process_queued_job_selections(
+    page,
+    jobs: dict[str, dict],
+    selected_job_ids: list[str],
+    processed_job_ids: set[str],
+    on_job_captured=None,
+) -> None:
+    processed_selection = False
+    while selected_job_ids:
+        job_id = selected_job_ids.pop(0)
+        if not job_id or job_id in processed_job_ids:
+            continue
+
+        processed_selection = True
+        result = capture_current_job(
+            page,
+            jobs,
+            on_job_captured=on_job_captured,
+            expected_job_id=job_id,
+        )
+        if result:
+            processed_job_ids.add(job_id)
+
+    if processed_selection:
+        print(
+            f"\nReady for another job. Select a different LinkedIn job "
+            f"to generate its resume; monitoring remains active."
+        )
+
+
+def install_job_click_listener(page, selected_job_ids: list[str]) -> None:
+    def enqueue_job_click(_source, job_id):
+        enqueue_selected_job(job_id, selected_job_ids)
+
+    page.expose_binding(
+        "notifyLinkedInJobClick",
+        enqueue_job_click,
+    )
+    listener_script = """
+    (() => {
+        if (window.__linkedinJobClickListenerInstalled) return;
+        window.__linkedinJobClickListenerInstalled = true;
+
+        const jobIdFromUrl = value => {
+            try {
+                const url = new URL(value, location.href);
+                return url.searchParams.get('currentJobId') ||
+                    (url.pathname.match(/\\/jobs\\/view\\/(\\d+)/) || [])[1] ||
+                    '';
+            } catch {
+                return '';
+            }
+        };
+
+        document.addEventListener('click', event => {
+            const path = event.composedPath();
+            let jobId = '';
+
+            for (const node of path) {
+                if (!(node instanceof Element)) continue;
+                const link = node.closest(
+                    'a[href*="/jobs/view/"], a[href*="currentJobId="]'
+                );
+                if (link) {
+                    jobId = jobIdFromUrl(link.href);
+                    if (jobId) break;
+                }
+
+                const card = node.closest(
+                    '[data-job-id], [data-occludable-job-id], ' +
+                    '.job-card-container, .jobs-search-results__list-item'
+                );
+                if (card) {
+                    jobId = card.getAttribute('data-job-id') ||
+                        card.getAttribute('data-occludable-job-id') || '';
+                    if (!/^\\d+$/.test(jobId)) {
+                        const cardLink = card.querySelector(
+                            'a[href*="/jobs/view/"], a[href*="currentJobId="]'
+                        );
+                        if (cardLink) jobId = jobIdFromUrl(cardLink.href);
+                    }
+                    if (/^\\d+$/.test(jobId)) break;
+                }
+            }
+
+            if (!/^\\d+$/.test(jobId)) return;
+            const now = Date.now();
+            if (window.__linkedinLastClickedJobId === jobId &&
+                now - window.__linkedinLastJobClickAt < 1200) return;
+
+            window.__linkedinLastClickedJobId = jobId;
+            window.__linkedinLastJobClickAt = now;
+            window.notifyLinkedInJobClick(jobId);
+        }, true);
+    })();
+    """
+    page.add_init_script(listener_script)
+    page.evaluate(listener_script)
 
 
 # ============================================================
@@ -781,13 +932,7 @@ def capture_current_job(page, jobs: dict[str, dict], on_job_captured=None):
 def resolve_search_url() -> str:
     if len(sys.argv) > 1 and not sys.argv[1].startswith("--"):
         return sys.argv[1].strip()
-
-    entered = input(
-        "\nPaste LinkedIn search/job URL "
-        "(press Enter for configured default):\n> "
-    ).strip()
-
-    return entered or DEFAULT_SEARCH_URL
+    return DEFAULT_SEARCH_URL
 
 
 # ============================================================
@@ -819,6 +964,9 @@ def run_linkedin_assisted(
             if context.pages
             else context.new_page()
         )
+        selected_job_ids = []
+        install_job_click_listener(page, selected_job_ids)
+        processed_job_ids = set()
 
         try:
             for search_url in search_urls:
@@ -839,77 +987,46 @@ def run_linkedin_assisted(
                     "\nNo password is collected by this script."
                 )
 
-                input(
-                    "\nWhen LinkedIn results are visible, "
-                    "press Enter in this terminal..."
-                )
-
                 if is_linkedin_challenge(page):
                     print(
                         "\nLinkedIn security check detected."
                         "\nComplete it manually in the browser."
                     )
+                    while is_linkedin_challenge(page):
+                        page.wait_for_timeout(1000)
 
-                    input(
-                        "Press Enter after the page is accessible..."
+                requested_job_id = enqueue_requested_job_url(
+                    search_url,
+                    selected_job_ids,
+                )
+                if requested_job_id and get_job_id(page.url) != requested_job_id:
+                    page.goto(
+                        search_url,
+                        wait_until="domcontentloaded",
+                        timeout=60000,
                     )
+                    while is_linkedin_challenge(page):
+                        page.wait_for_timeout(1000)
 
-                if is_linkedin_challenge(page):
-                    print("Security check remains. Skipping this URL.")
-                    continue
-
-                collect_search_results(page, jobs)
-
+                last_url_job_id = get_job_id(page.url)
+                print(
+                    "\nThe job ID in the URL you supplied will be processed automatically."
+                    "\nFor a general jobs page, choose a job after login; press Ctrl+C to stop."
+                )
                 while True:
-                    print("\n" + "-" * 55)
-                    print("LINKEDIN ASSISTED DISCOVERY")
-                    print("-" * 55)
-
-                    print("1. Capture selected job + generate tailored PDF")
-                    print("2. Collect visible jobs from current page")
-                    print("3. Return to original search URL")
-                    print("4. Debug current LinkedIn page")
-                    print("5. Finish this search URL")
-                    print("6. Exit collector")
-
-                    choice = input("\nChoice: ").strip()
-
-                    if choice == "1":
-                        capture_current_job(page, jobs, on_job_captured=on_job_captured)
-
-                    elif choice == "2":
-                        collect_search_results(page, jobs)
-
-                    elif choice == "3":
-                        page.goto(
-                            search_url,
-                            wait_until="domcontentloaded",
-                            timeout=60000
-                        )
-
-                        input(
-                            "When results are visible, "
-                            "press Enter..."
-                        )
-
-                        if is_linkedin_challenge(page):
-                            print("Security check detected. Capture stopped.")
-                            break
-
-                        collect_search_results(page, jobs)
-
-                    elif choice == "4":
-                        debug_linkedin_page(page)
-
-                    elif choice == "5":
-                        break
-
-                    elif choice == "6":
-                        save_jobs(jobs)
-                        return list(jobs.values())
-
-                    else:
-                        print("Please enter a valid option.")
+                    page.wait_for_timeout(500)
+                    last_url_job_id = detect_url_job_selection(
+                        page,
+                        last_url_job_id,
+                        selected_job_ids,
+                    )
+                    process_queued_job_selections(
+                        page,
+                        jobs,
+                        selected_job_ids,
+                        processed_job_ids,
+                        on_job_captured,
+                    )
 
         except KeyboardInterrupt:
             print("\nInterrupted by user.")

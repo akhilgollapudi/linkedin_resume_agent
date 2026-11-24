@@ -2,8 +2,12 @@
 .env
 __pycache__/
 *.py[cod]
+.DS_Store
 data/jobs.csv
 data/jobs.sqlite3
+data/master_resume.json
+data/linkedin_jobs.csv
+data/linkedin_jobs.json
 output/*
 !output/.gitkeep
 
