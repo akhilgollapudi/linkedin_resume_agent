@@ -58,6 +58,8 @@ def process_captured_job(settings, job):
     tailored = tailor_resume(resume, job, match)
     llm_result = tailor_summary_with_llm(job, resume)
     tailored.setdefault("basics", {})["summary"] = llm_result["summary"]
+    match = score_job(tailored, job)
+    tailored["targeting"]["match_score"] = match["score"]
 
     output_root = resolve(settings["resume"]["output_dir"])
     folder = output_root / f'{slug(job.get("company"))}_{slug(job.get("title"))}_{slug(job["job_id"], 20)}'
@@ -70,8 +72,8 @@ def process_captured_job(settings, job):
         "match": match,
         "llm_summary": {k: v for k, v in llm_result.items() if k != "summary"},
         "tailoring": {
-            "summary": "LLM-generated when OPENAI_API_KEY is configured; otherwise master summary retained",
-            "experience_bullets": "Preserved verbatim; projects are reordered by JD relevance",
+            "summary": "LLM-generated when available; otherwise exact role-relevant achievements are selected from the master resume",
+            "experience_bullets": "Preserved verbatim and reordered by role relevance; projects are reordered by JD relevance",
             "skills": "Existing skills reordered by JD relevance",
             "master_resume_modified": False,
             "human_review_required": True
@@ -104,20 +106,45 @@ def process_captured_job(settings, job):
 
 
 def process_imported_jobs(settings, force=False):
-    resume = load_json(resolve(settings["resume"]["master_json"]))
     jobs = read_jobs(resolve(settings["jobs"]["csv_path"]))
+    if not jobs:
+        print("No imported jobs with complete records are available.")
+        return
+
+    print("\nAvailable imported jobs:")
+    for index, job in enumerate(jobs, start=1):
+        print(f'{index}. {job.get("title", "(untitled)")} | {job.get("company", "(unknown company)")} | ID {job["job_id"]}')
+
+    selection = input("\nEnter the number of the one job to process (or press Enter to cancel): ").strip()
+    if not selection:
+        print("Cancelled; no imported jobs were processed.")
+        return
+    try:
+        selected_index = int(selection) - 1
+    except ValueError:
+        print("Invalid selection; no imported jobs were processed.")
+        return
+    if selected_index < 0 or selected_index >= len(jobs):
+        print("Selection is out of range; no imported jobs were processed.")
+        return
+
+    job = jobs[selected_index]
     store = JobStore(resolve(settings["jobs"]["database_path"]))
-    done = 0
-    for job in jobs:
-        if store.is_processed(job["job_id"]) and not force:
-            continue
-        if len(job.get("description", "")) < 200:
-            print(f'SKIP incomplete JD: {job.get("title")} at {job.get("company")}')
-            continue
-        pdf = process_captured_job(settings, job)
-        if pdf:
-            done += 1
-    print(f"Completed {done} job(s).")
+    if store.is_processed(job["job_id"]) and not force:
+        print("This job was already processed. Use --force to regenerate it.")
+        return
+    if len(job.get("description", "")) < 200:
+        print(f'SKIP incomplete JD: {job.get("title")} at {job.get("company")}')
+        return
+
+    confirmation = input(
+        f'Process only "{job.get("title")}" at {job.get("company")}? [y/N]: '
+    ).strip().lower()
+    if confirmation not in {"y", "yes"}:
+        print("Cancelled; no imported jobs were processed.")
+        return
+
+    process_captured_job(settings, job)
 
 
 def main():
@@ -127,7 +154,7 @@ def main():
     parser.add_argument("--url", help="Optional LinkedIn search or job URL to open")
     parser.add_argument("--force", action="store_true", help="Reserved for reprocessing imported jobs")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("process-csv", help="Process complete jobs already in data/jobs.csv")
+    sub.add_parser("process-csv", help="Select and process one complete job from data/jobs.csv")
     args = parser.parse_args()
 
     if args.command == "process-csv":
@@ -138,8 +165,8 @@ def main():
     print("=== LinkedIn Job → Tailored Resume ===")
     print("1) Browser opens with a persistent local profile.")
     print("2) Sign in manually, select a job, and wait for its details panel.")
-    print("3) In the terminal choose option 1 to capture and generate the PDF.")
-    print("4) No job title or company is hardcoded.")
+    print("3) Choose option 1 and confirm the displayed role before generating its PDF.")
+    print("4) Collecting jobs does not generate resumes; each generation requires confirmation.")
     run_linkedin_assisted(
         search_urls=urls,
         on_job_captured=lambda job: process_captured_job(settings, job)

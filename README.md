@@ -16,17 +16,17 @@ python main.py
 1. A persistent local Chromium profile opens at LinkedIn Jobs.
 2. Sign in manually if needed. The script does not collect your password.
 3. Search/navigate normally and click the job you want.
-4. Return to the terminal and choose **1. Capture selected job + generate tailored PDF**.
+4. Return to the terminal, choose **1. Confirm selected job + generate tailored PDF**, and confirm the displayed role.
 5. The selected job's title, company, URL and visible job description are extracted.
 6. A local keyword relevance score is calculated; selected jobs are not rejected by this heuristic.
 7. Existing projects and skills are reordered by relevance. Existing experience bullets and metrics remain unchanged.
-8. If `OPENAI_API_KEY` is configured, an LLM creates a role-targeted summary using only the supplied resume evidence. Otherwise, the master summary is retained.
+8. If `GROQ_API_KEY` is configured, Groq creates a role-targeted summary using only the supplied resume evidence. Otherwise, role-relevant achievements are selected from the master resume.
 9. A two-page PDF, tailored JSON, job description and match report are saved under `output/<company>_<role>_<jobid>/`.
 10. The job is saved to `data/jobs.csv` and SQLite history.
 
 ## LLM use
 
-Set `OPENAI_API_KEY` in `.env` to enable LLM summary tailoring. `OPENAI_MODEL` defaults to `gpt-4.1-mini`. The LLM only rewrites the summary; experience bullets, dates, employers, metrics and skills are not rewritten. A numeric-claim check is applied and failures fall back to the master summary. Always review the generated PDF for factual accuracy.
+Set `GROQ_API_KEY` in `.env` to enable hosted LLM summary tailoring through GroqCloud. `GROQ_MODEL` defaults to `openai/gpt-oss-20b`, which was verified against the live Groq API. Check the Groq console for active model availability and your account's free-tier limits; usage on the free tier is rate-limited. The prompt prioritizes relevant job-description terminology only when supported by the supplied resume, and requests a concise, plain-text, ATS-readable summary. If the LLM is unavailable or its output fails validation, the summary is built from up to two exact, role-relevant achievements in the master resume. Project and bullet ordering, skills, and the clearly marked target-role headline are tailored per job; no unsupported qualifications are added. Dates, employers, metrics, and achievement wording remain grounded in the master resume. The reported local match percentage is calculated against the final tailored resume, but remains only a keyword-overlap heuristic, not an ATS score; no prompt can guarantee a 100% ATS match or hiring outcome. Always review the generated PDF for factual accuracy.
 
 Without an API key, the pipeline still works: it reorders existing experience and skills using local JD vocabulary matching and creates the PDF.
 
@@ -38,7 +38,7 @@ python main.py --url "https://www.linkedin.com/jobs/search/?keywords=AI"
 python main.py process-csv
 ```
 
-`process-csv` processes complete records already in `data/jobs.csv`. The main browser workflow is the default.
+`process-csv` displays the complete records already in `data/jobs.csv` and prompts you to select and confirm exactly one job. Press Enter or decline confirmation to cancel without processing. The main browser workflow is the default; collecting search listings does not generate resumes, and browser-based generation requires confirming the selected role.
 
 ## LinkedIn safety and reliability
 

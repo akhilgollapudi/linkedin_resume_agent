@@ -36,11 +36,19 @@ def score_job(resume, job):
             "reason": "Heuristic JD vocabulary overlap; not an ATS score or hiring probability."}
 
 
+def role_description(job):
+    description = job.get("description", "")
+    for marker in ("Applicants:", "To all Staffing and Recruiting Agencies:",
+                   "Qualcomm expects its employees"):
+        description = description.split(marker, 1)[0]
+    return description
+
+
 def tailor_resume(resume, job, match):
     """Create a per-job copy by ranking existing evidence; never invent or rewrite claims."""
     import copy
     tailored = copy.deepcopy(resume)
-    jd_tokens = set(tokens(job.get("description", "")))
+    jd_tokens = set(tokens(role_description(job)))
 
     def relevance(item):
         text = " ".join([item.get("position", ""), item.get("project", ""),
@@ -48,12 +56,25 @@ def tailor_resume(resume, job, match):
         return len(set(tokens(text)) & jd_tokens)
 
     tailored["work"] = sorted(tailored.get("work", []), key=relevance, reverse=True)
+    for project in tailored["work"]:
+        project["highlights"] = [
+            highlight for _, highlight in sorted(
+                enumerate(project.get("highlights", [])),
+                key=lambda indexed: (
+                    len(set(tokens(indexed[1])) & jd_tokens),
+                    -indexed[0],
+                ),
+                reverse=True,
+            )
+        ]
     for group in tailored.get("skills", []):
         kws = group.get("keywords", [])
         group["keywords"] = sorted(kws, key=lambda x: len(set(tokens(x)) & jd_tokens), reverse=True)
     tailored["skills"] = sorted(tailored.get("skills", []),
                                 key=lambda g: sum(len(set(tokens(k)) & jd_tokens) for k in g.get("keywords", [])),
                                 reverse=True)
+    if job.get("title"):
+        tailored.setdefault("basics", {})["label"] = f'Target role: {job["title"]}'
     # Retain exact factual wording; add a target label only to metadata, not as an experience claim.
     tailored["targeting"] = {"company": job.get("company", ""), "role": job.get("title", ""),
                              "job_id": job.get("job_id", ""), "match_score": match["score"]}
